@@ -3,10 +3,8 @@ package org.example.project;
 import org.example.project.Repository.DataRepo;
 import org.graalvm.polyglot.Context;
 import org.graalvm.polyglot.Source;
-// NOTE: Removed 'import org.graalvm.polyglot.Value;' to resolve conflict
-
-import org.springframework.beans.factory.annotation.Value; // Spring's @Value is needed
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.core.io.Resource;
 import org.springframework.http.HttpHeaders;
@@ -17,7 +15,6 @@ import org.springframework.web.bind.annotation.RequestMapping;
 
 import java.io.IOException;
 import java.util.List;
-import java.util.stream.IntStream;
 
 @Controller
 public class PlotController {
@@ -25,13 +22,18 @@ public class PlotController {
     @Autowired
     private DataRepo dataRepo;
 
-    // This uses Spring's @Value
-    @Value("classpath:plot.R")
-    private Resource resource;
+    // Use fully qualified name to avoid conflict with Spring's @Value
+    @Autowired
+    private org.graalvm.polyglot.Value plotFunction;
 
-    // Use the Context object directly
+    // 🚩 Injected Context field for use in the load() method
     @Autowired
     private Context graalContext;
+
+    // --- STATIC STATE VARIABLES ---
+    private static List<DataHolder> allData = null;
+    private static int currentDataIndex = 0;
+    private static final int PLOT_WINDOW_SIZE = 100;
 
     // --- BEAN DEFINITIONS ---
 
@@ -40,41 +42,52 @@ public class PlotController {
         return Context.newBuilder().allowAllAccess(true).build();
     }
 
+    // 🚩 FIX 1: Declaring the factory method as static to break the circular reference.
+    // We inject the Resource and Context directly into the static method.
+    @Bean
+    public static org.graalvm.polyglot.Value getPlotFunction(@Autowired Context ctx, @Value("classpath:plot.R") Resource rSource)
+            throws IOException {
+        Source source = Source.newBuilder("R", rSource.getURL()).build();
+        // This evaluates the R script and returns the main function block.
+        return ctx.eval(source);
+    }
+
     // --- CONTROLLER METHOD ---
-
+    // ... (The load() method logic remains the same as the previous correct version) ...
     @RequestMapping(value = "/plot", produces = "image/svg+xml")
-    public ResponseEntity<String> load() throws IOException {
+    public ResponseEntity<String> load() {
 
-        // Ensure R script is loaded before execution
-        Source source = Source.newBuilder("R", resource.getURL()).build();
-        graalContext.eval(source);
+        synchronized (PlotController.class) {
 
-        HttpHeaders responseHeaders = new HttpHeaders();
-        responseHeaders.set("Refresh", "1");
+            if (allData == null) {
+                allData = dataRepo.findAll();
+                if (allData == null || allData.isEmpty()) {
+                    return new ResponseEntity<>("Error: No data available from repository.", HttpStatus.BAD_REQUEST);
+                }
+            }
 
-        // data fetching (assuming DataHolder and DataRepo are defined elsewhere)
-        List<DataHolder> data = dataRepo.findAll();
+            if (currentDataIndex >= allData.size()) {
+                currentDataIndex = 0;
 
-        if (data == null || data.isEmpty()) {
-            return new ResponseEntity<>("No data available to plot", HttpStatus.BAD_REQUEST);
-        }
+                org.graalvm.polyglot.Value rBindings = graalContext.getBindings("R");
+                org.graalvm.polyglot.Value resetFunction = rBindings.getMember("reset_state");
 
-        // Data Preparation: X and Y arrays
-        double[] yValues = data.stream().mapToDouble(DataHolder::getValue).toArray();
-        int[] xValues = IntStream.rangeClosed(1, yValues.length).toArray();
+                if (resetFunction != null && resetFunction.canExecute()) {
+                    resetFunction.execute();
+                }
+            }
 
-        // --- R Execution: The Fix ---
-        String svg;
+            double nextYValue = allData.get(currentDataIndex).getValue();
+            currentDataIndex++;
 
-        // FIX 1: Use fully qualified name for GraalVM Value
-        org.graalvm.polyglot.Value rPlotFunction = graalContext.getBindings("R").getMember("plotData");
+            HttpHeaders responseHeaders = new HttpHeaders();
+            responseHeaders.set("Refresh", "1");
 
-        synchronized(rPlotFunction){
-            // FIX 2: Use fully qualified name for GraalVM Value
-            org.graalvm.polyglot.Value result = rPlotFunction.execute(xValues, yValues);
+            String svg;
+            org.graalvm.polyglot.Value result = plotFunction.execute(nextYValue, PLOT_WINDOW_SIZE);
             svg = result.asString();
-        }
 
-        return new ResponseEntity<>(svg, responseHeaders, HttpStatus.OK);
+            return new ResponseEntity<>(svg, responseHeaders, HttpStatus.OK);
+        }
     }
 }

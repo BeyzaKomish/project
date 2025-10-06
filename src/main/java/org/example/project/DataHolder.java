@@ -12,7 +12,7 @@ public class DataHolder {
     @Id
     private String id;
 
-    @Field("Col-1")
+    @Field("Col-2")
     public double value;
 
     public DataHolder() {}
