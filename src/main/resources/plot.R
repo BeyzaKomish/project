@@ -1,10 +1,11 @@
 # plot.R
 library(lattice)
 
-# 1. INITIALIZE GLOBAL STATE VARIABLES FIRST AND SIMPLY
+ # builds the continous line plot for the graph
+ # stores all the y values
 data_history <<- numeric(0)
 row_numbers <<- numeric(0)
-global_row_index <<- 0
+global_row_index <<- 0 # represents the x axis values from 1 - 100
 
 # 2. DEFINITION: Reset function
 reset_state <- function() {
@@ -13,7 +14,8 @@ reset_state <- function() {
     global_row_index <<- 0
 }
 
-# 3. DEFINITION: The main plotting function (must be the last expression returned)
+# The primary main plotting function (must be the last expression returned)
+# takes the single y value and window size
 main_plot_function <- function(newValue, windowSize) {
 
     # Check if variables exist; if not, re-initialize (Safety Check)
@@ -25,7 +27,7 @@ main_plot_function <- function(newValue, windowSize) {
 
     # 1. Update counters and history
     global_row_index <<- global_row_index + 1
-    data_history <<- c(data_history, newValue)
+    data_history <<- c(data_history, newValue) # saves and adds the recent row value
     row_numbers <<- c(row_numbers, global_row_index)
 
     # 2. Trim the data if it exceeds the window size (100)
@@ -35,9 +37,8 @@ main_plot_function <- function(newValue, windowSize) {
         row_numbers <<- row_numbers[(current_size - windowSize + 1):current_size]
     }
 
-    # 3. Calculate dynamic plot range for Y-axis (Robustness fix from before)
+# for the plot to ensure the displayed line is always clearly visible and doesn't sit exactly on the edge of the graph
     if (current_size == 0) {
-        # Should not happen after the first point, but for safety
         y_range <- c(-1, 1)
     } else if (current_size == 1) {
         val <- data_history[1]
